@@ -32,7 +32,6 @@ A powerful tool for translating Minecraft mods into multiple languages, automati
 
 - **Automated Translation**: Quickly translate mod files to multiple languages
 - **AI-Powered Translation**: Optional OpenAI and DeepSeek integration for higher quality translations  
-- **Batched AI Requests**: OpenAI and DeepSeek translate entries in batches with glossary support, timeout handling, and validation
 - **Comprehensive File Support**: Compatible with JSON, LANG, and MCFUNCTION file formats
 - **Multiple Translation Services**: Support for Google Translate (free), OpenAI, and DeepSeek (API key required)
 - **Batch Processing**: Translate single files or entire mod folders at once
@@ -93,7 +92,6 @@ mod-translator --path path/to/mods --source en_US --target es_ES --output path/t
 # AI-powered translation with DeepSeek (OpenAI-compatible API)
 mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-flash
 mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-pro
-mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-flash --batch-size 50 --request-timeout 90 --glossary glossary.json
 
 # Parameters:
 # --path (-p): Path to mod or mods folder (default: ./mods)
@@ -103,10 +101,6 @@ mod-translator --path path/to/mods --source en_US --target zh_TW --output path/t
 # --ai: Backward-compatible shortcut for OpenAI translation (requires OPENAI_API_KEY)
 # --provider: Select google, openai, or deepseek
 # --model: AI model name, such as gpt-4o-mini, deepseek-v4-flash, deepseek-v4-pro, or a custom model string
-# --batch-size: AI translation batch size, default 50. Google Translate ignores this option.
-# --request-timeout: Timeout in seconds for each AI request, default 90.
-# --glossary: Path to glossary JSON for AI translation, default glossary.json.
-# --no-batch: Disable AI batch translation and use one request per entry for debugging.
 ```
 
 ### 🤖 AI Translation Setup
@@ -154,39 +148,6 @@ DEEPSEEK_REASONING_EFFORT=medium
 ```
 
 Use `--model` to override `DEEPSEEK_MODEL` for a single run.
-
-#### Batched AI translation and glossary
-
-OpenAI and DeepSeek translation uses batch mode by default. The tool sends multiple localization values in one JSON request, validates that the response keeps every original key, and checks that Minecraft formatting codes and placeholders are preserved. If a batch fails, it retries, splits the batch into smaller pieces, and only falls back to the original source text for entries that still fail as single items.
-
-Create `glossary.json` in the project root, or pass a custom path with `--glossary`:
-
-```json
-{
-  "Crystallite": "晶質石",
-  "Nether Diamond": "地獄鑽石",
-  "Ender Titanium": "終界鈦",
-  "Charm": "護符",
-  "Staff": "法杖",
-  "Ore Vision": "礦物視覺",
-  "HP": "HP",
-  "XP": "XP",
-  "OP": "OP"
-}
-```
-
-Useful controls:
-
-```bash
-# Smaller batches can be more stable on weaker or stricter models
-mod-translator --path ./mods --source en_US --target zh_TW --output ./translated --provider deepseek --batch-size 20
-
-# Avoid hanging forever on a slow request
-mod-translator --path ./mods --source en_US --target zh_TW --output ./translated --provider deepseek --request-timeout 60
-
-# Return to the original one-entry request flow for debugging
-mod-translator --path ./mods --source en_US --target zh_TW --output ./translated --provider deepseek --no-batch
-```
 
 ## 📸 Screenshots
 
