@@ -7,6 +7,7 @@ import json
 import re
 import shutil
 import argparse
+import time
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 from typing import Dict, List, Any
 
@@ -124,6 +125,10 @@ class Translator:
         use_openai: bool = False,
         ai_provider: str = "openai",
         model: str = None,
+        batch_size: int = 50,
+        request_timeout: float = 90,
+        glossary_path: str = "glossary.json",
+        use_batch: bool = True,
     ):
         self.source_language = source_language
         self.target_language = target_language
@@ -131,13 +136,47 @@ class Translator:
         self.use_openai = use_openai
         self.ai_provider = ai_provider
         self.requested_model = model
+        self.batch_size = max(1, int(batch_size or 50))
+        self.request_timeout = float(request_timeout or 90)
+        self.glossary_path = glossary_path or "glossary.json"
+        self.use_batch = use_batch
+        self.glossary = self._load_glossary(self.glossary_path) if self.use_openai else {}
         
         # Initialize retry decorators for both services
         self.google_retry = create_retry_decorator('google', max_retries=3)
         self.openai_retry = create_retry_decorator('openai', max_retries=3)
+        self.ai_batch_retry = create_retry_decorator('ai_batch', max_retries=3)
         
         if self.use_openai:
             self._setup_ai_provider()
+
+    def _load_glossary(self, glossary_path: str) -> Dict[str, str]:
+        """Load an optional glossary JSON object for AI translation."""
+        if not glossary_path:
+            return {}
+
+        normalized_path = os.path.abspath(glossary_path)
+        if not os.path.exists(normalized_path):
+            log_message(f"Glossary not found at {normalized_path}; continuing without glossary")
+            return {}
+
+        try:
+            with open(normalized_path, "r", encoding="utf-8") as glossary_file:
+                glossary_data = json.load(glossary_file)
+            if not isinstance(glossary_data, dict):
+                log_message(f"Glossary at {normalized_path} is not a JSON object; ignoring it")
+                return {}
+
+            cleaned_glossary = {
+                str(key): str(value)
+                for key, value in glossary_data.items()
+                if str(key).strip() and str(value).strip()
+            }
+            log_message(f"Loaded glossary with {len(cleaned_glossary)} terms from {normalized_path}")
+            return cleaned_glossary
+        except Exception as e:
+            log_message(f"Failed to load glossary at {normalized_path}: {e}; continuing without glossary")
+            return {}
 
     def _setup_ai_provider(self):
         """Setup OpenAI-compatible client for AI translation."""
@@ -222,6 +261,7 @@ class Translator:
                 ],
                 "temperature": 0.3,
                 "max_tokens": 500,
+                "timeout": self.request_timeout,
             }
 
             if self.ai_provider.lower() == "deepseek":
@@ -236,7 +276,7 @@ class Translator:
             translated_text = completion.choices[0].message.content.strip()
             
             if self.capitalize and translated_text:
-                translated_text = translated_text.capitalize()
+                translated_text = translated_text[0].upper() + translated_text[1:]
                 
             return translated_text
         
@@ -260,8 +300,12 @@ class Translator:
 
     def _translate_data_openai(self, data: Dict[str, str]) -> Dict[str, str]:
         """Translate data using an OpenAI-compatible provider with rate limiting protection."""
-        import time
-        
+        if self.use_batch:
+            return self._translate_data_openai_batch(data)
+        return self._translate_data_openai_single(data)
+
+    def _translate_data_openai_single(self, data: Dict[str, str]) -> Dict[str, str]:
+        """Translate data one entry at a time. Kept for fallback/debugging with --no-batch."""
         translated_data = {}
         total_items = len(data)
         
@@ -286,6 +330,234 @@ class Translator:
 
         log_message(f"Successfully translated {len(data)} entries using {self.ai_provider}")
         return translated_data
+
+    def _translate_data_openai_batch(self, data: Dict[str, str]) -> Dict[str, str]:
+        """Translate data using JSON batches with validation and split fallback."""
+        translated_data = {}
+        items = list(data.items())
+        translatable_items = [
+            (index, key, text)
+            for index, (key, text) in enumerate(items, 1)
+            if text and isinstance(text, str)
+        ]
+        total_entries = len(items)
+        total_translatable = len(translatable_items)
+
+        if not translatable_items:
+            return dict(items)
+
+        total_batches = (total_translatable + self.batch_size - 1) // self.batch_size
+        log_message(
+            f"Batch AI translation enabled: {total_translatable}/{total_entries} translatable entries, "
+            f"batch size {self.batch_size}, timeout {self.request_timeout:g}s"
+        )
+
+        translated_lookup = {}
+        for batch_number, offset in enumerate(range(0, total_translatable, self.batch_size), 1):
+            batch = translatable_items[offset:offset + self.batch_size]
+            rows = [
+                {"key": key, "source": text, "entry_index": entry_index}
+                for entry_index, key, text in batch
+            ]
+            translated_lookup.update(
+                self._translate_batch_with_split_fallback(rows, batch_number, total_batches)
+            )
+
+        for key, text in items:
+            translated_data[key] = translated_lookup.get(key, text)
+
+        failed_count = sum(
+            1
+            for key, text in items
+            if key in translated_lookup and translated_lookup[key] == text and text and isinstance(text, str)
+        )
+        log_message(
+            f"Successfully processed {len(data)} entries using {self.ai_provider}; "
+            f"{failed_count} entries kept as source text"
+        )
+        return translated_data
+
+    def _translate_batch_with_split_fallback(
+        self,
+        rows: List[Dict[str, Any]],
+        batch_number: int,
+        total_batches: int,
+    ) -> Dict[str, str]:
+        """Translate a batch, then split recursively if the whole batch keeps failing."""
+        if not rows:
+            return {}
+
+        try:
+            return self._translate_batch_with_openai(rows, batch_number, total_batches)
+        except Exception as e:
+            first_index = rows[0]["entry_index"]
+            last_index = rows[-1]["entry_index"]
+            log_message(
+                f"Batch {batch_number}/{total_batches} entries {first_index}-{last_index} failed: {e}"
+            )
+
+            if len(rows) == 1:
+                row = rows[0]
+                log_message(f'FAILED {row["key"]} = {row["source"]}')
+                return {row["key"]: row["source"]}
+
+            midpoint = len(rows) // 2
+            left = self._translate_batch_with_split_fallback(
+                rows[:midpoint], batch_number, total_batches
+            )
+            right = self._translate_batch_with_split_fallback(
+                rows[midpoint:], batch_number, total_batches
+            )
+            left.update(right)
+            return left
+
+    def _translate_batch_with_openai(
+        self,
+        rows: List[Dict[str, Any]],
+        batch_number: int,
+        total_batches: int,
+    ) -> Dict[str, str]:
+        """Translate one JSON batch through an OpenAI-compatible provider."""
+        first_index = rows[0]["entry_index"]
+        last_index = rows[-1]["entry_index"]
+
+        @self.ai_batch_retry
+        def _do_batch_translation() -> Dict[str, str]:
+            global_rate_limiter.apply_service_delay('openai')
+
+            log_message(
+                f"Translating batch {batch_number}/{total_batches} entries {first_index}-{last_index}..."
+            )
+            started_at = time.monotonic()
+            request_rows = [
+                {"key": row["key"], "source": row["source"]}
+                for row in rows
+            ]
+            user_payload = json.dumps(request_rows, ensure_ascii=False)
+            source_chars = sum(len(row["source"]) for row in rows)
+            max_tokens = min(12000, max(1000, source_chars * 3 + 800))
+
+            request = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": self._build_batch_system_prompt()},
+                    {"role": "user", "content": user_payload},
+                ],
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+                "timeout": self.request_timeout,
+            }
+
+            if self.ai_provider.lower() == "deepseek":
+                if getattr(self, "deepseek_thinking", "disabled") == "enabled":
+                    request["reasoning_effort"] = getattr(self, "deepseek_reasoning_effort", "medium")
+                    request["extra_body"] = {"thinking": {"type": "enabled"}}
+                else:
+                    request["extra_body"] = {"thinking": {"type": "disabled"}}
+
+            completion = self.openai_client.chat.completions.create(**request)
+            raw_response = completion.choices[0].message.content.strip()
+            parsed_response = self._parse_json_array_response(raw_response)
+            translated_lookup = self._validate_batch_response(rows, parsed_response)
+            elapsed = time.monotonic() - started_at
+            log_message(
+                f"Translated batch {batch_number}/{total_batches} in {elapsed:.1f}s"
+            )
+            return translated_lookup
+
+        return _do_batch_translation()
+
+    def _build_batch_system_prompt(self) -> str:
+        """Build the strict JSON batch translation prompt."""
+        glossary_text = json.dumps(self.glossary, ensure_ascii=False, indent=2) if self.glossary else "{}"
+        return f"""You are a professional Minecraft mod localization translator.
+Translate JSON array entries from {self.source_language} to {self.target_language}.
+
+Rules:
+- The input is a JSON array of objects: [{{"key":"...","source":"..."}}].
+- Return ONLY a valid JSON array of objects: [{{"key":"...","target":"..."}}].
+- Return every input key exactly once and do not change any key.
+- Translate only the source value into Traditional Chinese when target is zh_TW.
+- Use Minecraft terminology and natural in-game wording.
+- Strictly apply this glossary when matching source terms:
+{glossary_text}
+- Preserve Minecraft formatting codes such as §9 and §r exactly.
+- Preserve placeholders exactly, including %s, %d, %1$s, %2$d, {placeholder}, and line breaks.
+- Do not translate short technical abbreviations such as HP, XP, or OP.
+- Do not include explanations, markdown, comments, or surrounding text."""
+
+    def _parse_json_array_response(self, raw_response: str) -> List[Dict[str, Any]]:
+        """Parse a model response that must contain a JSON array."""
+        cleaned_response = raw_response.strip()
+        if cleaned_response.startswith("```"):
+            cleaned_response = re.sub(r"^```(?:json)?\s*", "", cleaned_response, flags=re.IGNORECASE)
+            cleaned_response = re.sub(r"\s*```$", "", cleaned_response)
+
+        try:
+            parsed_response = json.loads(cleaned_response)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"JSON parse failed: {e}") from e
+
+        if not isinstance(parsed_response, list):
+            raise ValueError("model response is not a JSON array")
+        return parsed_response
+
+    def _validate_batch_response(
+        self,
+        rows: List[Dict[str, Any]],
+        parsed_response: List[Dict[str, Any]],
+    ) -> Dict[str, str]:
+        """Validate key coverage and protected tokens before accepting a batch."""
+        expected_keys = [row["key"] for row in rows]
+        received_keys = []
+        translated_lookup = {}
+
+        for item in parsed_response:
+            if not isinstance(item, dict):
+                raise ValueError("batch response contains a non-object item")
+            if "key" not in item or "target" not in item:
+                raise ValueError("batch response item must contain key and target")
+
+            key = item["key"]
+            target = item["target"]
+            if not isinstance(key, str) or not isinstance(target, str):
+                raise ValueError("batch response key and target must be strings")
+            received_keys.append(key)
+            translated_lookup[key] = target
+
+        if received_keys != expected_keys:
+            missing_keys = [key for key in expected_keys if key not in translated_lookup]
+            extra_keys = [key for key in received_keys if key not in expected_keys]
+            raise ValueError(f"batch key mismatch; missing={missing_keys}, extra={extra_keys}")
+
+        for row in rows:
+            key = row["key"]
+            source = row["source"]
+            target = translated_lookup[key]
+            missing_tokens = self._missing_protected_tokens(source, target)
+            if missing_tokens:
+                raise ValueError(f"{key} lost protected tokens: {missing_tokens}")
+            if self.capitalize and target:
+                translated_lookup[key] = target[0].upper() + target[1:]
+
+        return translated_lookup
+
+    def _missing_protected_tokens(self, source: str, target: str) -> List[str]:
+        """Return protected placeholders/format tokens missing from translated text."""
+        token_pattern = re.compile(
+            r"(§[0-9a-fk-or]|%\d+\$[sd]|%[sd]|%%|\{[^{}\n]+\})",
+            re.IGNORECASE,
+        )
+        source_tokens = token_pattern.findall(source)
+        missing_tokens = []
+        for token in source_tokens:
+            if target.count(token) < source.count(token) and token not in missing_tokens:
+                missing_tokens.append(token)
+        if target.count("\n") < source.count("\n"):
+            missing_tokens.append("\\n")
+        if target.count("\\n") < source.count("\\n"):
+            missing_tokens.append("\\\\n")
+        return missing_tokens
 
     def _translate_data_google(self, data: Dict[str, str]) -> Dict[str, str]:
         """Translate data using Google Translate with rate limiting protection"""
@@ -378,6 +650,10 @@ class Settings:
         self.use_ai = False  # Default to Google Translate
         self.ai_provider = "google"
         self.ai_model = None
+        self.batch_size = 50
+        self.request_timeout = 90
+        self.glossary_path = "glossary.json"
+        self.no_batch = False
 
         # Override with CLI arguments if provided
         if cli_args:
@@ -404,6 +680,18 @@ class Settings:
 
             if hasattr(cli_args, "model") and cli_args.model:
                 self.ai_model = cli_args.model
+
+            if hasattr(cli_args, "batch_size") and cli_args.batch_size:
+                self.batch_size = max(1, int(cli_args.batch_size))
+
+            if hasattr(cli_args, "request_timeout") and cli_args.request_timeout:
+                self.request_timeout = float(cli_args.request_timeout)
+
+            if hasattr(cli_args, "glossary") and cli_args.glossary:
+                self.glossary_path = cli_args.glossary
+
+            if hasattr(cli_args, "no_batch") and cli_args.no_batch:
+                self.no_batch = True
 
             if hasattr(cli_args, "target") and cli_args.target:
                 self.target_mc_lang = self._format_lang(cli_args.target)
@@ -466,7 +754,11 @@ class FileManager:
                     settings.target_mc_lang,
                     use_openai=True,
                     ai_provider=settings.ai_provider,
-                    model=settings.ai_model
+                    model=settings.ai_model,
+                    batch_size=settings.batch_size,
+                    request_timeout=settings.request_timeout,
+                    glossary_path=settings.glossary_path,
+                    use_batch=not settings.no_batch,
                 )
             except (ImportError, ValueError) as e:
                 log_message(f"❌ {settings.ai_provider} initialization failed: {e}")
@@ -1245,6 +1537,28 @@ def add_translate_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--model",
         help="AI model name, e.g. deepseek-v4-pro, deepseek-v4-flash, or deepseek-v4-flash+",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="AI translation batch size (default: 50). Google Translate ignores this option.",
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=90,
+        help="Timeout in seconds for each AI API request (default: 90).",
+    )
+    parser.add_argument(
+        "--glossary",
+        default="glossary.json",
+        help="Path to a glossary JSON file for AI translation (default: glossary.json).",
+    )
+    parser.add_argument(
+        "--no-batch",
+        action="store_true",
+        help="Disable AI batch translation and use the previous one-entry request flow.",
     )
 
 

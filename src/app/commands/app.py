@@ -313,6 +313,9 @@ def get_user_input() -> Dict[str, Any]:
         
         use_ai = translation_method in {"openai", "deepseek"}
         ai_model = None
+        batch_size = 50
+        request_timeout = 90
+        glossary_path = "glossary.json"
         if translation_method == "deepseek":
             ai_model = questionary.text(
                 "DeepSeek model:",
@@ -320,6 +323,41 @@ def get_user_input() -> Dict[str, Any]:
                 style=QUESTIONARY_STYLE
             ).ask()
             if ai_model is None:
+                sys.exit(0)
+
+        if use_ai:
+            batch_size_input = questionary.text(
+                "AI batch size:",
+                default=os.getenv("AI_BATCH_SIZE", "50"),
+                style=QUESTIONARY_STYLE
+            ).ask()
+            if batch_size_input is None:
+                sys.exit(0)
+            try:
+                batch_size = max(1, int(batch_size_input))
+            except ValueError:
+                console.print("[bold red]Batch size must be a number. Exiting.[/bold red]")
+                sys.exit(1)
+
+            request_timeout_input = questionary.text(
+                "AI request timeout seconds:",
+                default=os.getenv("AI_REQUEST_TIMEOUT", "90"),
+                style=QUESTIONARY_STYLE
+            ).ask()
+            if request_timeout_input is None:
+                sys.exit(0)
+            try:
+                request_timeout = float(request_timeout_input)
+            except ValueError:
+                console.print("[bold red]Request timeout must be a number. Exiting.[/bold red]")
+                sys.exit(1)
+
+            glossary_path = questionary.text(
+                "Glossary JSON path:",
+                default=os.getenv("AI_GLOSSARY", "glossary.json"),
+                style=QUESTIONARY_STYLE
+            ).ask()
+            if glossary_path is None:
                 sys.exit(0)
         
         # Get output path
@@ -373,6 +411,10 @@ def get_user_input() -> Dict[str, Any]:
             "deepseek": f"🧠 DeepSeek ({ai_model})",
         }.get(translation_method, translation_method)
         confirmation_table.add_row("Translation method", method_label)
+        if use_ai:
+            confirmation_table.add_row("AI batch size", str(batch_size))
+            confirmation_table.add_row("AI request timeout", f"{request_timeout:g}s")
+            confirmation_table.add_row("Glossary", glossary_path or "None")
         confirmation_table.add_row("Output path", output_path)
         
         console.print(confirmation_table)
@@ -397,7 +439,11 @@ def get_user_input() -> Dict[str, Any]:
             "output": output_path,
             "ai": use_ai,
             "provider": translation_method,
-            "model": ai_model
+            "model": ai_model,
+            "batch_size": batch_size,
+            "request_timeout": request_timeout,
+            "glossary": glossary_path,
+            "no_batch": False,
         }
     except KeyboardInterrupt:
         # Silently exit on Ctrl+C without showing any error message
