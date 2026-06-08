@@ -31,9 +31,9 @@ A powerful tool for translating Minecraft mods into multiple languages, automati
 ## 🚀 Features
 
 - **Automated Translation**: Quickly translate mod files to multiple languages
-- **AI-Powered Translation**: Optional OpenAI integration for higher quality translations  
+- **AI-Powered Translation**: Optional OpenAI and DeepSeek integration for higher quality translations  
 - **Comprehensive File Support**: Compatible with JSON, LANG, and MCFUNCTION file formats
-- **Multiple Translation Services**: Support for Google Translate (free) and OpenAI (API key required)
+- **Multiple Translation Services**: Support for Google Translate (free), OpenAI, and DeepSeek (API key required)
 - **Batch Processing**: Translate single files or entire mod folders at once
 - **Smart Text Detection**: Automatically identifies translatable content while preserving game logic
 
@@ -87,6 +87,7 @@ mod-translator --path path/to/mods --source en_US --target es_ES --output path/t
 
 # AI-powered translation with OpenAI (requires API key)
 mod-translator --path path/to/mods --source en_US --target es_ES --output path/to/output --ai
+mod-translator --path path/to/mods --source en_US --target es_ES --output path/to/output --provider openai --model gpt-4o-mini
 
 # AI-powered translation with DeepSeek (OpenAI-compatible API)
 mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-flash
@@ -97,14 +98,16 @@ mod-translator --path path/to/mods --source en_US --target zh_TW --output path/t
 # --source (-s): Source language code (e.g., en_US)
 # --target (-t): Target language code (e.g., es_ES)
 # --output (-o): Output folder path (if same as mods path, will replace original mods)
-# --ai: Use OpenAI translation instead of Google Translate (requires OPENAI_API_KEY)
+# --ai: Backward-compatible shortcut for OpenAI translation (requires OPENAI_API_KEY)
 # --provider: Select google, openai, or deepseek
-# --model: AI model name, such as deepseek-v4-flash, deepseek-v4-pro, or a custom model string
+# --model: AI model name, such as gpt-4o-mini, deepseek-v4-flash, deepseek-v4-pro, or a custom model string
 ```
 
 ### 🤖 AI Translation Setup
 
-To use OpenAI-powered translation for higher quality results:
+The translator supports Google Translate by default, plus OpenAI-compatible AI providers through the `openai` Python package.
+
+#### OpenAI
 
 1. **Get an OpenAI API key**: Visit [OpenAI API](https://platform.openai.com/api-keys)
 2. **Set up environment**: Create a `.env` file in the project root:
@@ -116,11 +119,11 @@ To use OpenAI-powered translation for higher quality results:
    ```bash
    pip install openai python-dotenv
    ```
-4. **Use the --ai flag** when running translations
+4. **Use `--ai` or `--provider openai`** when running translations
 
 > **Note**: OpenAI translation provides better context awareness and gaming-specific terminology but requires an API key with usage costs.
 
-### 🧠 DeepSeek Translation Setup
+#### DeepSeek
 
 DeepSeek uses an OpenAI-compatible API. Configure it with:
 
@@ -143,6 +146,8 @@ Optional DeepSeek reasoning settings:
 DEEPSEEK_THINKING=disabled
 DEEPSEEK_REASONING_EFFORT=medium
 ```
+
+Use `--model` to override `DEEPSEEK_MODEL` for a single run.
 
 ## 📸 Screenshots
 
