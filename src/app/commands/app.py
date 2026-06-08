@@ -450,6 +450,8 @@ def run_translation(params: Dict[str, Any]) -> None:
             except KeyboardInterrupt:
                 # Silently exit on Ctrl+C without showing any error message
                 sys.exit(0)
+            except Exception:
+                raise
                 
         # Show completion message with panel
         success_message = "[bold]Translation completed successfully![/bold]\n"

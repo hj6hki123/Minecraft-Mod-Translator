@@ -7,7 +7,7 @@ import json
 import re
 import shutil
 import argparse
-from zipfile import ZipFile, ZIP_DEFLATED
+from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 from typing import Dict, List, Any
 
 # Import retry logic utilities
@@ -113,7 +113,7 @@ def parse_json_with_comments(file_path: str) -> Dict[str, Any]:
 class Translator:
     """
     A class for translating text data from a source language to a target language.
-    Supports both Google Translate and OpenAI translation.
+    Supports Google Translate and OpenAI-compatible AI translation providers.
     """
 
     def __init__(
@@ -250,7 +250,7 @@ class Translator:
         """
         Translate data from source to target language.
         """
-        translation_service = "OpenAI" if self.use_openai else "Google Translate"
+        translation_service = self.ai_provider if self.use_openai else "Google Translate"
         log_message(f"Translating {len(data)} entries from {self.source_language} to {self.target_language} using {translation_service}...")
 
         if self.use_openai:
@@ -259,7 +259,7 @@ class Translator:
             return self._translate_data_google(data)
 
     def _translate_data_openai(self, data: Dict[str, str]) -> Dict[str, str]:
-        """Translate data using OpenAI with rate limiting protection"""
+        """Translate data using an OpenAI-compatible provider with rate limiting protection."""
         import time
         
         translated_data = {}
@@ -284,7 +284,7 @@ class Translator:
                 log_message(f'Error translating "{text}": {str(e)}')
                 translated_data[key] = text
 
-        log_message(f"Successfully translated {len(data)} entries using OpenAI")
+        log_message(f"Successfully translated {len(data)} entries using {self.ai_provider}")
         return translated_data
 
     def _translate_data_google(self, data: Dict[str, str]) -> Dict[str, str]:
@@ -462,8 +462,8 @@ class FileManager:
             log_message(f"🤖 Using {settings.ai_provider} translator...")
             try:
                 self.translator = Translator(
-                    settings.source_google_lang, 
-                    settings.target_google_lang,
+                    settings.source_mc_lang,
+                    settings.target_mc_lang,
                     use_openai=True,
                     ai_provider=settings.ai_provider,
                     model=settings.ai_model
@@ -496,9 +496,12 @@ class FileManager:
             if mod_name.endswith(JAR):
                 mod_file_path = os.path.join(self.mods_path, mod_name)
                 unpacking_destination = os.path.join(self.temp_path, mod_name)
-                with ZipFile(mod_file_path, "r") as zip:
-                    log_message(f"Unpacking {mod_name}...")
-                    zip.extractall(unpacking_destination)
+                try:
+                    with ZipFile(mod_file_path, "r") as zip:
+                        log_message(f"Unpacking {mod_name}...")
+                        zip.extractall(unpacking_destination)
+                except BadZipFile:
+                    raise BadZipFile(f"{mod_file_path} is not a valid JAR/ZIP file")
 
     def get_lang_folders(self) -> List[str]:
         """
@@ -1354,3 +1357,4 @@ def handle_translate_command(args: argparse.Namespace) -> None:
         print(f"Error translating mods: {e}")
         import traceback
         traceback.print_exc()
+        raise
