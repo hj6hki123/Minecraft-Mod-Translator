@@ -482,7 +482,7 @@ Rules:
 - Strictly apply this glossary when matching source terms:
 {glossary_text}
 - Preserve Minecraft formatting codes such as §9 and §r exactly.
-- Preserve placeholders exactly, including %s, %d, %1$s, %2$d, {{placeholder}}, and line breaks.
+- Preserve placeholders exactly, including %s, %d, %1$s, %2$d, {placeholder}, and line breaks.
 - Do not translate short technical abbreviations such as HP, XP, or OP.
 - Do not include explanations, markdown, comments, or surrounding text."""
 
