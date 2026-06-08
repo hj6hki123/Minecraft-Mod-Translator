@@ -226,9 +226,11 @@ def get_user_input() -> Dict[str, Any]:
         if target_lang is None:  # This occurs when user presses Ctrl+C
             sys.exit(0)
         
-        # Check if OpenAI is available for translation method selection
+        # Check if OpenAI-compatible providers are available for translation method selection
         openai_available = False
         openai_status_message = ""
+        deepseek_available = False
+        deepseek_status_message = ""
         
         try:
             import openai
@@ -244,8 +246,16 @@ def get_user_input() -> Dict[str, Any]:
                 openai_status_message = "✅ Available (API key configured)"
             else:
                 openai_status_message = "❌ API key not found (.env file or environment variable)"
+
+            deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
+            if deepseek_api_key:
+                deepseek_available = True
+                deepseek_status_message = "✅ Available (API key configured)"
+            else:
+                deepseek_status_message = "❌ API key not found (.env file or environment variable)"
         except ImportError:
             openai_status_message = "❌ Package not installed (pip install openai python-dotenv)"
+            deepseek_status_message = "❌ Package not installed (pip install openai python-dotenv)"
         
         # Get translation method
         translation_choices = [
@@ -259,6 +269,15 @@ def get_user_input() -> Dict[str, Any]:
         else:
             translation_choices.append(
                 {"name": f"🤖 OpenAI Translation (Premium) - {openai_status_message}", "value": "openai_unavailable"}
+            )
+
+        if deepseek_available:
+            translation_choices.append(
+                {"name": f"🧠 DeepSeek Translation - {deepseek_status_message}", "value": "deepseek"}
+            )
+        else:
+            translation_choices.append(
+                {"name": f"🧠 DeepSeek Translation - {deepseek_status_message}", "value": "deepseek_unavailable"}
             )
         
         translation_method = questionary.select(
@@ -282,8 +301,26 @@ def get_user_input() -> Dict[str, Any]:
             console.print("3. Create a [cyan].env[/cyan] file with: [cyan]OPENAI_API_KEY=your_key_here[/cyan]")
             console.print("\nFalling back to Google Translate...\n")
             translation_method = "google"
+
+        if translation_method == "deepseek_unavailable":
+            console.print("\n[bold yellow]DeepSeek Translation Setup Required[/bold yellow]")
+            console.print("To use DeepSeek translation, you need to:")
+            console.print("1. Install dependencies: [cyan]pip install openai python-dotenv[/cyan]")
+            console.print("2. Get an API key from: [cyan]https://platform.deepseek.com[/cyan]")
+            console.print("3. Create a [cyan].env[/cyan] file with: [cyan]DEEPSEEK_API_KEY=your_key_here[/cyan]")
+            console.print("\nFalling back to Google Translate...\n")
+            translation_method = "google"
         
-        use_ai = translation_method == "openai"
+        use_ai = translation_method in {"openai", "deepseek"}
+        ai_model = None
+        if translation_method == "deepseek":
+            ai_model = questionary.text(
+                "DeepSeek model:",
+                default=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+                style=QUESTIONARY_STYLE
+            ).ask()
+            if ai_model is None:
+                sys.exit(0)
         
         # Get output path
         output_choice = questionary.select(
@@ -330,7 +367,12 @@ def get_user_input() -> Dict[str, Any]:
         confirmation_table.add_row("Mods path", mods_path)
         confirmation_table.add_row("Source language", language_names.get(source_lang, source_lang))
         confirmation_table.add_row("Target language", language_names.get(target_lang, target_lang))
-        confirmation_table.add_row("Translation method", "🤖 OpenAI (Premium)" if use_ai else "🌐 Google Translate (Free)")
+        method_label = {
+            "google": "🌐 Google Translate (Free)",
+            "openai": "🤖 OpenAI (Premium)",
+            "deepseek": f"🧠 DeepSeek ({ai_model})",
+        }.get(translation_method, translation_method)
+        confirmation_table.add_row("Translation method", method_label)
         confirmation_table.add_row("Output path", output_path)
         
         console.print(confirmation_table)
@@ -353,7 +395,9 @@ def get_user_input() -> Dict[str, Any]:
             "source": source_lang,
             "target": target_lang,
             "output": output_path,
-            "ai": use_ai
+            "ai": use_ai,
+            "provider": translation_method,
+            "model": ai_model
         }
     except KeyboardInterrupt:
         # Silently exit on Ctrl+C without showing any error message
@@ -455,7 +499,7 @@ def main() -> None:
         
         params = get_user_input()
         
-        # Additional check for OpenAI if AI translation was selected
+        # Additional check for OpenAI-compatible provider if AI translation was selected
         if params.get("ai", False):
             try:
                 import openai
@@ -465,15 +509,16 @@ def main() -> None:
                 except ImportError:
                     pass
                 
-                api_key = os.getenv("OPENAI_API_KEY")
+                provider = params.get("provider", "openai")
+                env_key_name = "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
+                api_key = os.getenv(env_key_name)
                 if not api_key:
                     console.print(Panel(
-                        "[bold]OpenAI API key not found![/bold]\n"
-                        "To use OpenAI translation:\n"
-                        "1. Get an API key from: [cyan]https://platform.openai.com/api-keys[/cyan]\n"
-                        "2. Create a [cyan].env[/cyan] file with: [cyan]OPENAI_API_KEY=your_key_here[/cyan]\n"
-                        "3. Or set the environment variable: [cyan]OPENAI_API_KEY=your_key[/cyan]",
-                        title="OpenAI Setup Required",
+                        f"[bold]{provider} API key not found![/bold]\n"
+                        f"To use {provider} translation:\n"
+                        f"1. Set the environment variable: [cyan]{env_key_name}=your_key[/cyan]\n"
+                        f"2. Or create a [cyan].env[/cyan] file with: [cyan]{env_key_name}=your_key_here[/cyan]",
+                        title=f"{provider} Setup Required",
                         border_style="red",
                         title_align="center",
                         box=box.DOUBLE

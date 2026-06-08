@@ -117,22 +117,30 @@ class Translator:
     """
 
     def __init__(
-        self, source_language: str, target_language: str, capitalize: bool = True, use_openai: bool = False
+        self,
+        source_language: str,
+        target_language: str,
+        capitalize: bool = True,
+        use_openai: bool = False,
+        ai_provider: str = "openai",
+        model: str = None,
     ):
         self.source_language = source_language
         self.target_language = target_language
         self.capitalize = capitalize
         self.use_openai = use_openai
+        self.ai_provider = ai_provider
+        self.requested_model = model
         
         # Initialize retry decorators for both services
         self.google_retry = create_retry_decorator('google', max_retries=3)
         self.openai_retry = create_retry_decorator('openai', max_retries=3)
         
         if self.use_openai:
-            self._setup_openai()
+            self._setup_ai_provider()
 
-    def _setup_openai(self):
-        """Setup OpenAI client for AI translation"""
+    def _setup_ai_provider(self):
+        """Setup OpenAI-compatible client for AI translation."""
         try:
             from openai import OpenAI
             
@@ -146,6 +154,26 @@ class Translator:
             except ImportError:
                 log_message("⚠️ python-dotenv not found. Using system environment variables.")
             
+            provider = self.ai_provider.lower()
+            if provider == "deepseek":
+                self.api_key = os.getenv("DEEPSEEK_API_KEY")
+                if not self.api_key:
+                    raise ValueError(
+                        "DEEPSEEK_API_KEY environment variable not set.\n"
+                        "Please:\n"
+                        "1. Set DEEPSEEK_API_KEY environment variable, or\n"
+                        "2. Create a .env file with: DEEPSEEK_API_KEY=your_key_here"
+                    )
+                self.openai_client = OpenAI(
+                    api_key=self.api_key,
+                    base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+                )
+                self.model = self.requested_model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+                self.deepseek_thinking = os.getenv("DEEPSEEK_THINKING", "disabled").lower()
+                self.deepseek_reasoning_effort = os.getenv("DEEPSEEK_REASONING_EFFORT", "medium")
+                log_message(f"🤖 DeepSeek initialized with model: {self.model}")
+                return
+
             self.api_key = os.getenv("OPENAI_API_KEY")
             if not self.api_key:
                 raise ValueError(
@@ -156,14 +184,14 @@ class Translator:
                 )
             
             self.openai_client = OpenAI(api_key=self.api_key)
-            self.model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+            self.model = self.requested_model or os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
             log_message(f"🤖 OpenAI initialized with model: {self.model}")
             
         except ImportError:
             raise ImportError("OpenAI package not found. Install with: pip install openai python-dotenv")
 
     def _translate_with_openai(self, text: str) -> str:
-        """Translate text using OpenAI with retry logic and rate limiting"""
+        """Translate text using OpenAI-compatible chat completions with retry logic."""
         if not text.strip():
             return text
         
@@ -173,26 +201,37 @@ class Translator:
             # Apply preventive delay to avoid rate limits
             global_rate_limiter.apply_service_delay('openai')
             
-            system_prompt = f"""You are a professional translator specializing in video game localization.
+            system_prompt = f"""You are a professional translator specializing in Minecraft and video game localization.
             Translate from {self.source_language} to {self.target_language}.
             
             Guidelines:
-            - Preserve formatting like %s, %d, {{}} placeholders
-            - Maintain gaming-appropriate tone
+            - Preserve formatting like %s, %d, %1$s, {{}} placeholders and Minecraft § formatting codes
+            - Translate only the text value, never translate localization keys
+            - Maintain Minecraft-appropriate terminology and tone
             - Use natural, idiomatic expressions
             - Keep technical terms consistent
+            - You may leave short technical abbreviations such as HP, XP and OP untranslated
             
             Respond with ONLY the translated text, no explanations."""
             
-            completion = self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=[
+            request = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Translate: {text}"}
                 ],
-                temperature=0.3,
-                max_tokens=500
-            )
+                "temperature": 0.3,
+                "max_tokens": 500,
+            }
+
+            if self.ai_provider.lower() == "deepseek":
+                if getattr(self, "deepseek_thinking", "disabled") == "enabled":
+                    request["reasoning_effort"] = getattr(self, "deepseek_reasoning_effort", "medium")
+                    request["extra_body"] = {"thinking": {"type": "enabled"}}
+                else:
+                    request["extra_body"] = {"thinking": {"type": "disabled"}}
+
+            completion = self.openai_client.chat.completions.create(**request)
             
             translated_text = completion.choices[0].message.content.strip()
             
@@ -204,7 +243,7 @@ class Translator:
         try:
             return _do_openai_translation(text)
         except Exception as e:
-            log_message(f"OpenAI translation failed after all retries for '{text}': {e}")
+            log_message(f"{self.ai_provider} translation failed after all retries for '{text}': {e}")
             return text  # Return original on error
 
     def translate_data(self, data: Dict[str, str]) -> Dict[str, str]:
@@ -337,6 +376,8 @@ class Settings:
         self.temp_path = "temp"
         self.translation_path = "./translated"
         self.use_ai = False  # Default to Google Translate
+        self.ai_provider = "google"
+        self.ai_model = None
 
         # Override with CLI arguments if provided
         if cli_args:
@@ -354,7 +395,15 @@ class Settings:
                 
             if hasattr(cli_args, "ai") and cli_args.ai:
                 self.use_ai = True
+                self.ai_provider = "openai"
                 self.source_mc_lang = self._format_lang(cli_args.source)
+
+            if hasattr(cli_args, "provider") and cli_args.provider:
+                self.ai_provider = cli_args.provider.lower()
+                self.use_ai = self.ai_provider in {"openai", "deepseek"}
+
+            if hasattr(cli_args, "model") and cli_args.model:
+                self.ai_model = cli_args.model
 
             if hasattr(cli_args, "target") and cli_args.target:
                 self.target_mc_lang = self._format_lang(cli_args.target)
@@ -410,15 +459,17 @@ class FileManager:
 
         # Choose translator based on settings
         if settings.use_ai:
-            log_message("🤖 Using OpenAI translator...")
+            log_message(f"🤖 Using {settings.ai_provider} translator...")
             try:
                 self.translator = Translator(
                     settings.source_google_lang, 
                     settings.target_google_lang,
-                    use_openai=True
+                    use_openai=True,
+                    ai_provider=settings.ai_provider,
+                    model=settings.ai_model
                 )
             except (ImportError, ValueError) as e:
-                log_message(f"❌ OpenAI initialization failed: {e}")
+                log_message(f"❌ {settings.ai_provider} initialization failed: {e}")
                 log_message("🔄 Falling back to Google Translate...")
                 self.translator = Translator(
                     settings.source_google_lang, settings.target_google_lang
@@ -1183,6 +1234,15 @@ def add_translate_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--ai", action="store_true", help="Use OpenAI translation instead of Google Translate"
     )
+    parser.add_argument(
+        "--provider",
+        choices=["google", "openai", "deepseek"],
+        help="Translation provider. Use deepseek for DeepSeek API.",
+    )
+    parser.add_argument(
+        "--model",
+        help="AI model name, e.g. deepseek-v4-pro, deepseek-v4-flash, or deepseek-v4-flash+",
+    )
 
 
 def handle_translate_command(args: argparse.Namespace) -> None:
@@ -1193,9 +1253,13 @@ def handle_translate_command(args: argparse.Namespace) -> None:
         args: ArgumentParser arguments
     """
     try:
+        provider = getattr(args, "provider", None)
+        ai_requested = (hasattr(args, "ai") and args.ai) or provider in {"openai", "deepseek"}
+
         # Check if AI translation is requested
-        if hasattr(args, "ai") and args.ai:
-            log_message("🤖 AI translation mode enabled")
+        if ai_requested:
+            provider = provider or "openai"
+            log_message(f"🤖 AI translation mode enabled ({provider})")
             # Check if OpenAI dependencies are available
             try:
                 import openai
@@ -1208,16 +1272,17 @@ def handle_translate_command(args: argparse.Namespace) -> None:
                     log_message("⚠️ python-dotenv not found, using system environment variables")
                 
                 # Now check for API key after loading .env
-                api_key = os.getenv("OPENAI_API_KEY")
+                env_key_name = "DEEPSEEK_API_KEY" if provider == "deepseek" else "OPENAI_API_KEY"
+                api_key = os.getenv(env_key_name)
                 if not api_key:
-                    print("❌ Error: OPENAI_API_KEY environment variable not set.")
-                    print("Please set your OpenAI API key:")
-                    print("1. Set OPENAI_API_KEY environment variable, or")
-                    print("2. Create a .env file with: OPENAI_API_KEY=your_key_here")
+                    print(f"❌ Error: {env_key_name} environment variable not set.")
+                    print(f"Please set your {provider} API key:")
+                    print(f"1. Set {env_key_name} environment variable, or")
+                    print(f"2. Create a .env file with: {env_key_name}=your_key_here")
                     print("3. Make sure the .env file is in the project root directory")
                     return
                 else:
-                    log_message(f"✅ OpenAI API key found (length: {len(api_key)} characters)")
+                    log_message(f"✅ {provider} API key found (length: {len(api_key)} characters)")
                     
             except ImportError:
                 print("❌ Error: OpenAI package not found.")

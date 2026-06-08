@@ -88,12 +88,18 @@ mod-translator --path path/to/mods --source en_US --target es_ES --output path/t
 # AI-powered translation with OpenAI (requires API key)
 mod-translator --path path/to/mods --source en_US --target es_ES --output path/to/output --ai
 
+# AI-powered translation with DeepSeek (OpenAI-compatible API)
+mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-flash
+mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-pro
+
 # Parameters:
 # --path (-p): Path to mod or mods folder (default: ./mods)
 # --source (-s): Source language code (e.g., en_US)
 # --target (-t): Target language code (e.g., es_ES)
 # --output (-o): Output folder path (if same as mods path, will replace original mods)
 # --ai: Use OpenAI translation instead of Google Translate (requires OPENAI_API_KEY)
+# --provider: Select google, openai, or deepseek
+# --model: AI model name, such as deepseek-v4-flash, deepseek-v4-pro, or a custom model string
 ```
 
 ### 🤖 AI Translation Setup
@@ -113,6 +119,30 @@ To use OpenAI-powered translation for higher quality results:
 4. **Use the --ai flag** when running translations
 
 > **Note**: OpenAI translation provides better context awareness and gaming-specific terminology but requires an API key with usage costs.
+
+### 🧠 DeepSeek Translation Setup
+
+DeepSeek uses an OpenAI-compatible API. Configure it with:
+
+```env
+DEEPSEEK_API_KEY=your_api_key_here
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+Examples:
+
+```bash
+mod-translator --path ./mods --source en_US --target zh_TW --output ./translated --provider deepseek --model deepseek-v4-flash
+mod-translator --path ./mods --source en_US --target zh_TW --output ./translated --provider deepseek --model deepseek-v4-pro
+```
+
+Optional DeepSeek reasoning settings:
+
+```env
+DEEPSEEK_THINKING=disabled
+DEEPSEEK_REASONING_EFFORT=medium
+```
 
 ## 📸 Screenshots
 
