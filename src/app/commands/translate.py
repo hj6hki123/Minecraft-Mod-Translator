@@ -378,6 +378,7 @@ class Settings:
         self.use_ai = False  # Default to Google Translate
         self.ai_provider = "google"
         self.ai_model = None
+        self.skip_existing = False
 
         # Override with CLI arguments if provided
         if cli_args:
@@ -404,6 +405,9 @@ class Settings:
 
             if hasattr(cli_args, "model") and cli_args.model:
                 self.ai_model = cli_args.model
+
+            if hasattr(cli_args, "skip_existing") and cli_args.skip_existing:
+                self.skip_existing = True
 
             if hasattr(cli_args, "target") and cli_args.target:
                 self.target_mc_lang = self._format_lang(cli_args.target)
@@ -456,6 +460,7 @@ class FileManager:
 
         self.source_mc_lang = settings.source_mc_lang
         self.target_mc_lang = settings.target_mc_lang
+        self.skip_existing = settings.skip_existing
 
         # Choose translator based on settings
         if settings.use_ai:
@@ -633,31 +638,43 @@ class FileManager:
 
             # Check and process JSON files
             if os.path.exists(source_json_path):
-                log_subtitle(
-                    f"Creating {self.target_mc_lang.lower()}{JSON} from {self.source_mc_lang.lower()}{JSON}..."
-                )
-                original_data = self._read_json_file(source_json_path)
-                if original_data:
-                    translated_data = self.translator.translate_data(original_data)
-                    self._write_json_file(translated_data, target_json_path)
-                    log_message(f"Successfully translated JSON file for {mod_name}")
+                if self.skip_existing and os.path.exists(target_json_path):
+                    log_message(
+                        f"Skipping existing target JSON file for {mod_name}: {os.path.basename(target_json_path)}"
+                    )
                     files_processed = True
                 else:
-                    log_message(f"No data found in source JSON file for {mod_name}")
+                    log_subtitle(
+                        f"Creating {self.target_mc_lang.lower()}{JSON} from {self.source_mc_lang.lower()}{JSON}..."
+                    )
+                    original_data = self._read_json_file(source_json_path)
+                    if original_data:
+                        translated_data = self.translator.translate_data(original_data)
+                        self._write_json_file(translated_data, target_json_path)
+                        log_message(f"Successfully translated JSON file for {mod_name}")
+                        files_processed = True
+                    else:
+                        log_message(f"No data found in source JSON file for {mod_name}")
 
             # Check and process LANG files
             if os.path.exists(source_lang_path):
-                log_subtitle(
-                    f"Creating {self.target_mc_lang}{LANG} from {self.source_mc_lang}{LANG}..."
-                )
-                original_data = self._read_lang_file(source_lang_path)
-                if original_data:
-                    translated_data = self.translator.translate_data(original_data)
-                    self._write_lang_file(translated_data, target_lang_path)
-                    log_message(f"Successfully translated LANG file for {mod_name}")
+                if self.skip_existing and os.path.exists(target_lang_path):
+                    log_message(
+                        f"Skipping existing target LANG file for {mod_name}: {os.path.basename(target_lang_path)}"
+                    )
                     files_processed = True
                 else:
-                    log_message(f"No data found in source LANG file for {mod_name}")
+                    log_subtitle(
+                        f"Creating {self.target_mc_lang}{LANG} from {self.source_mc_lang}{LANG}..."
+                    )
+                    original_data = self._read_lang_file(source_lang_path)
+                    if original_data:
+                        translated_data = self.translator.translate_data(original_data)
+                        self._write_lang_file(translated_data, target_lang_path)
+                        log_message(f"Successfully translated LANG file for {mod_name}")
+                        files_processed = True
+                    else:
+                        log_message(f"No data found in source LANG file for {mod_name}")
 
             # If no exact match found, try case-insensitive search
             if not files_processed:
@@ -674,23 +691,29 @@ class FileManager:
                             lang_folder, f"{self.target_mc_lang.lower()}{JSON}"
                         )
 
-                        log_subtitle(
-                            f"Creating {self.target_mc_lang.lower()}{JSON} from {filename}..."
-                        )
-                        original_data = self._read_json_file(source_file_path)
-                        if original_data:
-                            translated_data = self.translator.translate_data(
-                                original_data
-                            )
-                            self._write_json_file(translated_data, target_file_path)
+                        if self.skip_existing and os.path.exists(target_file_path):
                             log_message(
-                                f"Successfully translated JSON file for {mod_name}"
+                                f"Skipping existing target JSON file for {mod_name}: {os.path.basename(target_file_path)}"
                             )
                             files_processed = True
                         else:
-                            log_message(
-                                f"No data found in source JSON file for {mod_name}"
+                            log_subtitle(
+                                f"Creating {self.target_mc_lang.lower()}{JSON} from {filename}..."
                             )
+                            original_data = self._read_json_file(source_file_path)
+                            if original_data:
+                                translated_data = self.translator.translate_data(
+                                    original_data
+                                )
+                                self._write_json_file(translated_data, target_file_path)
+                                log_message(
+                                    f"Successfully translated JSON file for {mod_name}"
+                                )
+                                files_processed = True
+                            else:
+                                log_message(
+                                    f"No data found in source JSON file for {mod_name}"
+                                )
 
                     # Try to find LANG files with case-insensitive matching
                     elif lower_filename == f"{self.source_mc_lang}{LANG}".lower():
@@ -699,23 +722,29 @@ class FileManager:
                             lang_folder, f"{self.target_mc_lang}{LANG}"
                         )
 
-                        log_subtitle(
-                            f"Creating {self.target_mc_lang}{LANG} from {filename}..."
-                        )
-                        original_data = self._read_lang_file(source_file_path)
-                        if original_data:
-                            translated_data = self.translator.translate_data(
-                                original_data
-                            )
-                            self._write_lang_file(translated_data, target_file_path)
+                        if self.skip_existing and os.path.exists(target_file_path):
                             log_message(
-                                f"Successfully translated LANG file for {mod_name}"
+                                f"Skipping existing target LANG file for {mod_name}: {os.path.basename(target_file_path)}"
                             )
                             files_processed = True
                         else:
-                            log_message(
-                                f"No data found in source LANG file for {mod_name}"
+                            log_subtitle(
+                                f"Creating {self.target_mc_lang}{LANG} from {filename}..."
                             )
+                            original_data = self._read_lang_file(source_file_path)
+                            if original_data:
+                                translated_data = self.translator.translate_data(
+                                    original_data
+                                )
+                                self._write_lang_file(translated_data, target_file_path)
+                                log_message(
+                                    f"Successfully translated LANG file for {mod_name}"
+                                )
+                                files_processed = True
+                            else:
+                                log_message(
+                                    f"No data found in source LANG file for {mod_name}"
+                                )
 
             if not files_processed:
                 log_message(f"No translatable language files found for {mod_name}")
@@ -1245,6 +1274,11 @@ def add_translate_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--model",
         help="AI model name, e.g. deepseek-v4-pro, deepseek-v4-flash, or deepseek-v4-flash+",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip translating a language file when the target language file already exists.",
     )
 
 

@@ -93,6 +93,9 @@ mod-translator --path path/to/mods --source en_US --target es_ES --output path/t
 mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-flash
 mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --model deepseek-v4-pro
 
+# Skip mods that already contain the target language file
+mod-translator --path path/to/mods --source en_US --target zh_TW --output path/to/output --provider deepseek --skip-existing
+
 # Parameters:
 # --path (-p): Path to mod or mods folder (default: ./mods)
 # --source (-s): Source language code (e.g., en_US)
@@ -101,6 +104,7 @@ mod-translator --path path/to/mods --source en_US --target zh_TW --output path/t
 # --ai: Backward-compatible shortcut for OpenAI translation (requires OPENAI_API_KEY)
 # --provider: Select google, openai, or deepseek
 # --model: AI model name, such as gpt-4o-mini, deepseek-v4-flash, deepseek-v4-pro, or a custom model string
+# --skip-existing: Do not overwrite an existing target language file such as zh_tw.json or zh_TW.lang
 ```
 
 ### 🤖 AI Translation Setup

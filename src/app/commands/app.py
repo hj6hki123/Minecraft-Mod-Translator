@@ -353,6 +353,15 @@ def get_user_input() -> Dict[str, Any]:
             
             # Create output directory if it doesn't exist
             os.makedirs(output_path, exist_ok=True)
+
+        skip_existing = questionary.confirm(
+            "Skip files that already have the target language?",
+            default=True,
+            style=QUESTIONARY_STYLE,
+        ).ask()
+
+        if skip_existing is None:
+            sys.exit(0)
         
         # Clear the console before showing confirmation
         os.system('cls' if os.name == 'nt' else 'clear')
@@ -373,6 +382,7 @@ def get_user_input() -> Dict[str, Any]:
             "deepseek": f"🧠 DeepSeek ({ai_model})",
         }.get(translation_method, translation_method)
         confirmation_table.add_row("Translation method", method_label)
+        confirmation_table.add_row("Skip existing target files", "Yes" if skip_existing else "No")
         confirmation_table.add_row("Output path", output_path)
         
         console.print(confirmation_table)
@@ -397,7 +407,8 @@ def get_user_input() -> Dict[str, Any]:
             "output": output_path,
             "ai": use_ai,
             "provider": translation_method,
-            "model": ai_model
+            "model": ai_model,
+            "skip_existing": skip_existing,
         }
     except KeyboardInterrupt:
         # Silently exit on Ctrl+C without showing any error message
